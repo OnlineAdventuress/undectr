@@ -8,7 +8,7 @@ on:
       version:
         description: 'Version tag (optional)'
         required: false
-        default: ''
+        default: 'latest'
 
 jobs:
   build-mac:
@@ -29,9 +29,6 @@ jobs:
     
     - name: Build TypeScript and Vite
       run: npm run build
-    
-    - name: Install dmg-license (macOS specific)
-      run: npm install dmg-license --save-dev
     
     - name: Build macOS universal app
       run: npm run build:mac
