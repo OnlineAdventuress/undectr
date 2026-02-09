@@ -27,14 +27,14 @@ jobs:
     - name: Install dependencies
       run: npm ci
     
-    - name: Build TypeScript and Vite for app
-      run: npm run build --workspace=app
+    - name: Build TypeScript and Vite
+      run: npm run build
     
     - name: Install dmg-license (macOS specific)
-      run: npm install dmg-license --save-dev --workspace=app
+      run: npm install dmg-license --save-dev
     
     - name: Build macOS universal app
-      run: npm run build:mac --workspace=app
+      run: npm run build:mac
       env:
         # Optional: Add signing credentials if available
         # CSC_LINK: ${{ secrets.CSC_LINK }}
