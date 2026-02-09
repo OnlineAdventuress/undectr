@@ -12,9 +12,9 @@
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:mac": "electron-builder --mac --universal",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux",
+    "build:mac": "electron-builder --mac --universal --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never",
     "lint": "eslint .",
     "type-check": "tsc --noEmit"
   },
@@ -30,6 +30,7 @@
     "directories": {
       "output": "release"
     },
+    "publish": null,
     "mac": {
       "category": "public.app-category.music",
       "icon": "assets/icon.icns",

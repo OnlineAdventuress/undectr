@@ -13,6 +13,8 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     steps:
     - name: Checkout repository
