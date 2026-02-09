@@ -107,11 +107,11 @@ ipcMain.handle('open-file-dialog', async () => {
     ]
   });
 
-  if (result.canceled) {
+  if ((result as any).canceled) {
     return null;
   }
 
-  return result.filePaths[0];
+  return (result as any).filePaths[0];
 });
 
 ipcMain.handle('open-folder-dialog', async () => {
@@ -119,11 +119,11 @@ ipcMain.handle('open-folder-dialog', async () => {
     properties: ['openDirectory']
   });
 
-  if (result.canceled) {
+  if ((result as any).canceled) {
     return null;
   }
 
-  return result.filePaths[0];
+  return (result as any).filePaths[0];
 });
 
 ipcMain.handle('check-license', async (event, licenseKey: string) => {
