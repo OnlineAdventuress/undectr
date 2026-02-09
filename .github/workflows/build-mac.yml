@@ -38,17 +38,17 @@ jobs:
     - name: List build artifacts
       run: |
         echo "Build output:"
-        ls -la release/mac/
-        echo "Checking file type:"
-        find release/mac -name "*.app" -exec sh -c 'echo "=== {} ==="; file "$1"/Contents/MacOS/* 2>/dev/null || true' _ {} \;
+        ls -la release/
+        echo "Checking file types:"
+        find release -name "*.dmg" -o -name "*.zip" -o -name "*.app" 2>/dev/null | while read f; do echo "=== $f ==="; file "$f" 2>/dev/null || true; done
     
     - name: Upload macOS artifacts
       uses: actions/upload-artifact@v4
       with:
         name: undectr-macos
         path: |
-          release/mac/*.dmg
-          release/mac/*.zip
-          release/mac/*.app
+          release/*.dmg
+          release/*.zip
+          release/*.app
         if-no-files-found: error
         retention-days: 7
