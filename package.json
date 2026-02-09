@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Electron desktop application for Undectr",
   "author": "Undectr Team",
-  "main": "main.js",
+  "main": "dist/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
@@ -29,7 +29,6 @@
       "!node_modules/.cache/**/*"
     ],
     "directories": {
-      "app": "dist",
       "output": "release"
     },
     "publish": null,

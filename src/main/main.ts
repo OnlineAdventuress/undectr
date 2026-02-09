@@ -15,7 +15,7 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       sandbox: false // Disable sandbox to avoid SUID issues on Linux
     },
-    icon: path.join(__dirname, 'assets/icon.png'),
+    icon: path.join(__dirname, '../../assets/icon.png'),
     titleBarStyle: 'default',
     backgroundColor: '#0f172a'
   });
@@ -25,7 +25,7 @@ const createWindow = () => {
     mainWindow.loadURL('http://localhost:3001');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   mainWindow.on('closed', () => {
