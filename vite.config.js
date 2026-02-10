@@ -5,16 +5,18 @@ import { resolve } from 'path';
 const rootDir = __dirname;
 
 export default defineConfig(({ command }) => ({
-  // Use src/renderer as the root for the renderer process
-  root: 'src/renderer',
+  // Use web/ as the single source of truth for the renderer
+  root: 'web',
 
-  // Build with relative asset paths for Electron
+  // Build with relative asset paths so the same output works for:
+  // - GitHub Pages (/repo/)
+  // - Electron loadFile() (file://.../dist/index.html)
   base: command === 'build' ? './' : '/',
 
   plugins: [
     electron({
       main: {
-        entry: resolve(rootDir, 'src/main/main.js'),
+        entry: resolve(rootDir, 'electron/main.js'),
         vite: {
           build: {
             outDir: resolve(rootDir, 'dist-electron'),
@@ -22,7 +24,7 @@ export default defineConfig(({ command }) => ({
         },
       },
       preload: {
-        input: resolve(rootDir, 'src/main/preload.js'),
+        input: resolve(rootDir, 'electron/preload.js'),
         vite: {
           build: {
             outDir: resolve(rootDir, 'dist-electron'),

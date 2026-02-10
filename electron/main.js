@@ -16,7 +16,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     },
     backgroundColor: '#080808',
-    icon: path.join(__dirname, '..', '..', 'assets', 'icon.png')
+    icon: path.join(__dirname, '..', 'icon.png')
   });
 
   // Load from Vite dev server or built files
@@ -24,7 +24,7 @@ function createWindow() {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
   // Clear reference when window is closed

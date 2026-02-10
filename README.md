@@ -14,7 +14,7 @@ Professional AI Audio Mastering - Remove watermarks and prepare audio for stream
 ### Processing Chain
 
 - **Glue Compression**: Multiband compression to glue the mix
-- **De-harsh**: Tames AI artifacts in 3-12kHz range
+- **De-harsh**: Tames AI artifacts in 3-12kHz range  
 - **Clean Low End**: Removes sub-bass rumble and DC offset
 - **Auto Level**: Intelligent gain automation
 - **Add Punch**: Multiband transient shaping
@@ -50,11 +50,6 @@ npm run build:linux
 - **macOS**: 10.14 or later
 - **Windows**: Windows 10 or later
 - **Linux**: Ubuntu 18.04 or equivalent
-
-## Build Status
-
-[![Build macOS](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-mac.yml/badge.svg)](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-mac.yml)
-[![Build Windows](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-win.yml/badge.svg)](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-win.yml)
 
 ## License
 

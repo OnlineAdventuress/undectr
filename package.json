@@ -23,8 +23,7 @@
     "spotify ready",
     "lufs",
     "true peak",
-    "electron",
-    "audio processing"
+    "electron"
   ],
   "build": {
     "appId": "com.undectr.app",
@@ -34,23 +33,22 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*",
-      "assets/**/*"
+      "dist-electron/**/*"
     ],
     "win": {
       "target": "portable",
-      "icon": "assets/icon.ico"
+      "icon": "icon.png"
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/icon.icns",
+      "icon": "icon.png",
       "category": "public.app-category.music",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
     },
     "linux": {
       "target": "AppImage",
-      "icon": "assets/icon.png"
+      "icon": "icon.png"
     }
   },
   "devDependencies": {
