@@ -28,6 +28,9 @@
       "node_modules/**/*",
       "!node_modules/.cache/**/*"
     ],
+    "asarUnpack": [
+      "python/**/*"
+    ],
     "directories": {
       "output": "release"
     },

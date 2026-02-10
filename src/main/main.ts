@@ -169,15 +169,18 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
     console.log('[IPC] __dirname:', __dirname);
     
     // Check all possible locations for main.py
+    // IMPORTANT: asarUnpack in package.json extracts python/ to app.asar.unpacked/
     const possibleScriptPaths = [
+      // UNPACKED location (primary) - electron-builder extracts python here
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'python', 'main.py'),
       // macOS app bundle - Contents/Resources/app/python/main.py
-      path.join(process.resourcesPath, 'app/python/main.py'),
+      path.join(process.resourcesPath, 'app', 'python', 'main.py'),
       // macOS app bundle - Contents/Resources/python/main.py  
-      path.join(process.resourcesPath, 'python/main.py'),
+      path.join(process.resourcesPath, 'python', 'main.py'),
       // Development - project root
-      path.join(appPath, 'python/main.py'),
+      path.join(appPath, 'python', 'main.py'),
       // Relative to main.js location
-      path.join(__dirname, '../../../python/main.py'),
+      path.join(__dirname, '..', '..', '..', 'python', 'main.py'),
       // Fallback to server path (for testing)
       '/home/ubuntu/clawd/suno-studio-pro/python/main.py'
     ];
