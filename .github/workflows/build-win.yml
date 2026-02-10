@@ -1,18 +1,13 @@
-name: Build macOS Undectr App
+name: Build Windows Undectr App
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (optional)'
-        required: false
-        default: 'latest'
 
 jobs:
-  build-mac:
-    runs-on: macos-latest
+  build-win:
+    runs-on: windows-latest
     
     steps:
     - name: Checkout repository
@@ -30,20 +25,20 @@ jobs:
     - name: Build application
       run: npm run build
     
-    - name: Build macOS app
-      run: npm run build:mac
+    - name: Build Windows app
+      run: npm run build:win
     
     - name: List build artifacts
       run: |
         echo "Build output:"
-        ls -la release/
+        Get-ChildItem -Path release\
     
-    - name: Upload macOS artifacts
+    - name: Upload Windows artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: undectr-macos
+        name: undectr-windows
         path: |
-          release/*.dmg
-          release/*.zip
+          release/*.exe
+          release/*.portable
         if-no-files-found: error
         retention-days: 7
