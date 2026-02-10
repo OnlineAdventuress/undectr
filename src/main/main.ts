@@ -39,6 +39,9 @@ const createWindow = () => {
 
 app.whenReady().then(() => {
   console.log('[Undectr] App starting...');
+  console.log('[Undectr] App path:', app.getAppPath());
+  console.log('[Undectr] Resources path:', process.resourcesPath);
+  console.log('[Undectr] __dirname:', __dirname);
   createWindow();
 
   app.on('activate', () => {
@@ -123,50 +126,72 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
       };
     }
 
-    // Find Python executable - check multiple locations for bundled vs dev
+    // Find Python script - check all possible locations
     const isDev = process.env.NODE_ENV === 'development';
     const appPath = app.getAppPath();
     
-    const pythonPaths = [
-      // Development paths
-      isDev && path.join(__dirname, '../../../python/venv/bin/python'),
-      isDev && path.join(__dirname, '../../../python/venv/Scripts/python.exe'),
-      // Bundled app paths (macOS)
-      path.join(process.resourcesPath, 'python/venv/bin/python'),
-      path.join(appPath, 'python/venv/bin/python'),
-      path.join(process.resourcesPath, '../python/venv/bin/python'),
-      // System Python as fallback
-      'python3',
-      'python'
-    ].filter(Boolean) as string[];
+    console.log('[IPC] Looking for Python script...');
+    console.log('[IPC] isDev:', isDev);
+    console.log('[IPC] appPath:', appPath);
+    console.log('[IPC] resourcesPath:', process.resourcesPath);
+    console.log('[IPC] __dirname:', __dirname);
     
-    let pythonPath = pythonPaths.find(p => fs.existsSync(p)) || 'python3';
-    console.log('[IPC] Using Python:', pythonPath);
-    console.log('[IPC] App path:', appPath);
-    console.log('[IPC] Resources path:', process.resourcesPath);
-    
-    // Find the main.py script - check bundled locations first
-    const scriptPaths = [
-      // Bundled app paths (macOS app bundle)
+    // Check all possible locations for main.py
+    const possibleScriptPaths = [
+      // macOS app bundle - Contents/Resources/app/python/main.py
+      path.join(process.resourcesPath, 'app/python/main.py'),
+      // macOS app bundle - Contents/Resources/python/main.py  
       path.join(process.resourcesPath, 'python/main.py'),
+      // Development - project root
       path.join(appPath, 'python/main.py'),
-      path.join(process.resourcesPath, '../python/main.py'),
-      // Development paths
+      // Relative to main.js location
       path.join(__dirname, '../../../python/main.py'),
+      // Fallback to server path (for testing)
       '/home/ubuntu/clawd/suno-studio-pro/python/main.py'
     ];
     
-    const pythonScript = scriptPaths.find(p => fs.existsSync(p));
+    console.log('[IPC] Checking script paths:', possibleScriptPaths);
+    
+    let pythonScript: string | null = null;
+    for (const scriptPath of possibleScriptPaths) {
+      const exists = fs.existsSync(scriptPath);
+      console.log(`[IPC] Checking ${scriptPath}: ${exists ? 'EXISTS' : 'NOT FOUND'}`);
+      if (exists && !pythonScript) {
+        pythonScript = scriptPath;
+      }
+    }
     
     if (!pythonScript) {
-      console.error('[IPC] Python script not found. Checked:', scriptPaths);
+      console.error('[IPC] Python script not found in any location');
       return {
         success: false,
-        error: 'Python backend not found. Please ensure Python environment is installed.'
+        error: 'Python backend not found. The python/main.py file is missing from the app bundle.'
       };
     }
     
     console.log('[IPC] Using Python script:', pythonScript);
+    
+    // Get the python directory (for cwd)
+    const pythonDir = path.dirname(pythonScript);
+    console.log('[IPC] Python directory (cwd):', pythonDir);
+    
+    // Verify python directory exists and is a directory
+    try {
+      const stats = fs.statSync(pythonDir);
+      if (!stats.isDirectory()) {
+        console.error('[IPC] Python path is not a directory:', pythonDir);
+        return {
+          success: false,
+          error: `Invalid Python directory: ${pythonDir}`
+        };
+      }
+    } catch (err) {
+      console.error('[IPC] Cannot stat Python directory:', err);
+      return {
+        success: false,
+        error: `Cannot access Python directory: ${pythonDir}`
+      };
+    }
 
     const outputPath = filePath.replace(/(\.[a-zA-Z0-9]+)$/, '_processed$1');
     console.log('[IPC] Output will be:', outputPath);
@@ -182,10 +207,17 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
         '--verbose'
       ];
 
-      console.log('[IPC] Spawning Python with args:', args.join(' '));
+      console.log('[IPC] Spawning python3 with args:', args);
+      console.log('[IPC] Working directory:', pythonDir);
       
-      const pythonProcess = spawn(pythonPath, args, {
-        cwd: path.dirname(pythonScript)
+      // Use system python3 and pass the script as first argument
+      // This is more reliable than trying to bundle a Python interpreter
+      const pythonProcess = spawn('python3', args, {
+        cwd: pythonDir,
+        env: {
+          ...process.env,
+          PYTHONPATH: pythonDir
+        }
       });
 
       let stdout = '';
@@ -227,11 +259,11 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
         }
       });
 
-      pythonProcess.on('error', (err) => {
+      pythonProcess.on('error', (err: any) => {
         console.error('[IPC] Failed to start Python process:', err);
         resolve({
           success: false,
-          error: `Failed to start Python: ${err.message}`
+          error: `Failed to start Python: ${err.message}. Make sure Python 3 is installed on your system.`
         });
       });
     });
