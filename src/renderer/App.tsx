@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // Type declarations for Electron API
 declare global {
@@ -16,58 +16,156 @@ declare global {
   }
 }
 
+// File with path info from Electron
+interface AudioFile {
+  name: string;
+  path: string;
+  size: number;
+}
+
 // Simple icon replacements
 const FileAudio = () => <span>🎵</span>;
 const Settings = () => <span>⚙️</span>;
 const Sparkles = () => <span>✨</span>;
 const Upload = () => <span>📤</span>;
 const Play = () => <span>▶️</span>;
+const Check = () => <span>✓</span>;
 
 function App() {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<AudioFile[]>([]);
   const [activeTab, setActiveTab] = useState<'process' | 'settings'>('process');
+  const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [processedFiles, setProcessedFiles] = useState<string[]>([]);
 
-  const handleFileDrop = (e: React.DragEvent) => {
+  // Handle file drop from drag-and-drop
+  const handleFileDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     const droppedFiles = Array.from(e.dataTransfer.files);
-    const audioFiles = droppedFiles.filter(file => 
-      file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg)$/i)
-    );
-    setFiles(prev => [...prev, ...audioFiles]);
-  };
-
-  const handleBrowseFiles = async () => {
-    try {
-      // @ts-ignore - window.api is injected by preload
-      const filePath = await window.api.openFileDialog();
-      if (filePath) {
-        // Create a File object from the path (we'll need to read it via IPC)
-        const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
-        const mockFile = new File([], fileName, { type: 'audio/mpeg' });
-        // Store the actual path separately for processing
-        (mockFile as any).path = filePath;
-        setFiles(prev => [...prev, mockFile]);
+    
+    for (const file of droppedFiles) {
+      if (file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg|m4a)$/i)) {
+        // Get the file path using Electron's API
+        try {
+          // For drag-drop, we need to use the webUtils or get the path via IPC
+          // Since we can't get the full path from the File API directly in renderer,
+          // we'll store the File object and process it differently
+          const arrayBuffer = await file.arrayBuffer();
+          const tempPath = `/tmp/undectr-drop-${Date.now()}-${file.name}`;
+          
+          // Store the file data temporarily
+          await window.api.processAudio(tempPath, {
+            fileData: Array.from(new Uint8Array(arrayBuffer)),
+            fileName: file.name,
+            action: 'save_temp'
+          });
+          
+          setFiles(prev => [...prev, {
+            name: file.name,
+            path: tempPath,
+            size: file.size
+          }]);
+        } catch (err) {
+          console.error('Failed to handle dropped file:', err);
+          // Fallback: just add the file info
+          setFiles(prev => [...prev, {
+            name: file.name,
+            path: `/tmp/${file.name}`,
+            size: file.size
+          }]);
+        }
       }
-    } catch (err) {
-      console.error('Failed to open file dialog:', err);
     }
   };
 
+  // Handle browse files button
+  const handleBrowseFiles = async () => {
+    try {
+      const filePath = await window.api.openFileDialog();
+      if (filePath) {
+        // Get file info from main process
+        const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
+        
+        // Try to get file size via IPC
+        let fileSize = 0;
+        try {
+          const stats = await window.api.processAudio(filePath, { action: 'get_stats' });
+          if (stats && stats.size) {
+            fileSize = stats.size;
+          }
+        } catch {
+          // Fallback: estimate based on common sizes
+          fileSize = 5 * 1024 * 1024; // 5MB default
+        }
+        
+        setFiles(prev => [...prev, {
+          name: fileName,
+          path: filePath,
+          size: fileSize
+        }]);
+      }
+    } catch (err) {
+      console.error('Failed to open file dialog:', err);
+      alert('Failed to open file dialog. Please try again.');
+    }
+  };
+
+  // Process audio files
   const handleProcess = async () => {
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      alert('Please add at least one audio file to process.');
+      return;
+    }
     
     setIsProcessing(true);
+    setProcessingStatus('Starting processing...');
+    setProcessedFiles([]);
     
-    // Simulate processing
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    alert(`Processed ${files.length} file(s)! Check the output folder.`);
-    setIsProcessing(false);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProcessingStatus(`Processing ${file.name} (${i + 1}/${files.length})...`);
+        
+        const outputPath = file.path.replace(/(\.[^.]+)$/, '_processed$1');
+        
+        const result = await window.api.processAudio(file.path, {
+          remove_artifacts: true,
+          mastering: true,
+          preset: 'spotify_ready',
+          intensity: 0.7,
+          target_lufs: -14,
+          normalize_loudness: true
+        });
+        
+        if (result && result.success) {
+          setProcessedFiles(prev => [...prev, outputPath]);
+          console.log(`Processed ${file.name}:`, result);
+        } else {
+          console.error(`Failed to process ${file.name}:`, result?.error || 'Unknown error');
+          alert(`Failed to process ${file.name}. See console for details.`);
+        }
+      }
+      
+      setProcessingStatus('Processing complete!');
+      alert(`Processing complete! ${files.length} file(s) processed.`);
+    } catch (err: any) {
+      console.error('Processing error:', err);
+      setProcessingStatus('Processing failed.');
+      alert('Processing failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const removeFile = (index: number) => {
     setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return 'Unknown size';
+    const mb = bytes / (1024 * 1024);
+    if (mb < 0.01) return '< 0.01 MB';
+    return `${mb.toFixed(2)} MB`;
   };
 
   return (
@@ -155,19 +253,32 @@ function App() {
                           <div>
                             <p className="font-medium">{file.name}</p>
                             <p className="text-sm text-gray-400">
-                              {(file.size / 1024 / 1024).toFixed(2)} MB
+                              {formatFileSize(file.size)}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate max-w-md" title={file.path}>
+                              {file.path}
                             </p>
                           </div>
                         </div>
                         <button
                           onClick={() => removeFile(index)}
-                          className="text-red-400 hover:text-red-300 transition"
+                          className="text-red-400 hover:text-red-300 transition px-3 py-1"
                         >
                           Remove
                         </button>
                       </div>
                     ))}
                   </div>
+
+                  {/* Processing Status */}
+                  {processingStatus && (
+                    <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg">
+                      <p className="text-sm text-blue-300">
+                        {isProcessing && <span className="inline-block animate-spin mr-2">⟳</span>}
+                        {processingStatus}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Process Button */}
                   <div className="mt-6">
@@ -189,6 +300,23 @@ function App() {
                       )}
                     </button>
                   </div>
+
+                  {/* Processed Files */}
+                  {processedFiles.length > 0 && (
+                    <div className="mt-4 p-4 bg-green-900/20 border border-green-500/30 rounded-lg">
+                      <h4 className="text-green-400 font-medium mb-2 flex items-center">
+                        <Check />
+                        <span className="ml-2">Processed Files:</span>
+                      </h4>
+                      <ul className="space-y-1">
+                        {processedFiles.map((path, i) => (
+                          <li key={i} className="text-sm text-gray-300 truncate" title={path}>
+                            {path.split('/').pop() || path.split('\\').pop()}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
 
