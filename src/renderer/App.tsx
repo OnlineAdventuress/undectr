@@ -1,438 +1,494 @@
 import React, { useState, useEffect } from 'react';
 
-// Type declarations for Electron API
+// Type for file with path
+type AudioFile = {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  outputPath?: string;
+  error?: string;
+};
+
+// Declare Electron API
 declare global {
   interface Window {
     api: {
-      getLicenseInfo: () => Promise<any>;
-      getUsage: () => Promise<any>;
-      processAudio: (filePath: string, settings: any) => Promise<any>;
       openFileDialog: () => Promise<string | null>;
-      openFolderDialog: () => Promise<string | null>;
-      checkLicense: (licenseKey: string) => Promise<any>;
-      activateLicense: (licenseKey: string, email: string) => Promise<any>;
-      getAppVersion: () => Promise<any>;
+      processAudio: (filePath: string, settings: any) => Promise<any>;
     };
   }
 }
 
-// File with path info from Electron
-interface AudioFile {
-  name: string;
-  path: string;
-  size: number;
-}
-
-// Simple icon replacements
-const FileAudio = () => <span>🎵</span>;
-const Settings = () => <span>⚙️</span>;
-const Sparkles = () => <span>✨</span>;
-const Upload = () => <span>📤</span>;
-const Play = () => <span>▶️</span>;
-const Check = () => <span>✓</span>;
-
-function App() {
-  const [isProcessing, setIsProcessing] = useState(false);
+export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
-  const [activeTab, setActiveTab] = useState<'process' | 'settings'>('process');
-  const [processingStatus, setProcessingStatus] = useState<string>('');
-  const [processedFiles, setProcessedFiles] = useState<string[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [currentFileIndex, setCurrentFileIndex] = useState(-1);
+  const [logs, setLogs] = useState<string[]>([]);
 
-  // Handle file drop from drag-and-drop
-  const handleFileDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    const droppedFiles = Array.from(e.dataTransfer.files);
+  // Debug logging
+  const log = (msg: string) => {
+    console.log(msg);
+    setLogs(prev => [...prev.slice(-9), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  };
+
+  // Browse files button
+  const handleBrowse = async () => {
+    log('Browse button clicked');
     
-    for (const file of droppedFiles) {
-      if (file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg|m4a)$/i)) {
-        // Get the file path using Electron's API
-        try {
-          // For drag-drop, we need to use the webUtils or get the path via IPC
-          // Since we can't get the full path from the File API directly in renderer,
-          // we'll store the File object and process it differently
-          const arrayBuffer = await file.arrayBuffer();
-          const tempPath = `/tmp/undectr-drop-${Date.now()}-${file.name}`;
-          
-          // Store the file data temporarily
-          await window.api.processAudio(tempPath, {
-            fileData: Array.from(new Uint8Array(arrayBuffer)),
-            fileName: file.name,
-            action: 'save_temp'
-          });
-          
-          setFiles(prev => [...prev, {
-            name: file.name,
-            path: tempPath,
-            size: file.size
-          }]);
-        } catch (err) {
-          console.error('Failed to handle dropped file:', err);
-          // Fallback: just add the file info
-          setFiles(prev => [...prev, {
-            name: file.name,
-            path: `/tmp/${file.name}`,
-            size: file.size
-          }]);
-        }
-      }
-    }
-  };
-
-  // Handle browse files button
-  const handleBrowseFiles = async () => {
-    try {
-      const filePath = await window.api.openFileDialog();
-      if (filePath) {
-        // Get file info from main process
-        const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
-        
-        // Try to get file size via IPC
-        let fileSize = 0;
-        try {
-          const stats = await window.api.processAudio(filePath, { action: 'get_stats' });
-          if (stats && stats.size) {
-            fileSize = stats.size;
-          }
-        } catch {
-          // Fallback: estimate based on common sizes
-          fileSize = 5 * 1024 * 1024; // 5MB default
-        }
-        
-        setFiles(prev => [...prev, {
-          name: fileName,
-          path: filePath,
-          size: fileSize
-        }]);
-      }
-    } catch (err) {
-      console.error('Failed to open file dialog:', err);
-      alert('Failed to open file dialog. Please try again.');
-    }
-  };
-
-  // Process audio files
-  const handleProcess = async () => {
-    if (files.length === 0) {
-      alert('Please add at least one audio file to process.');
+    if (!window.api) {
+      alert('Error: Electron API not available');
+      log('ERROR: window.api is undefined');
       return;
     }
-    
-    setIsProcessing(true);
-    setProcessingStatus('Starting processing...');
-    setProcessedFiles([]);
-    
+
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setProcessingStatus(`Processing ${file.name} (${i + 1}/${files.length})...`);
-        
-        const outputPath = file.path.replace(/(\.[^.]+)$/, '_processed$1');
-        
+      log('Calling window.api.openFileDialog()...');
+      const filePath = await window.api.openFileDialog();
+      log(`File dialog returned: ${filePath || 'null (cancelled)'}`);
+      
+      if (!filePath) {
+        log('User cancelled file selection');
+        return;
+      }
+
+      // Extract filename and estimate size
+      const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+      const newFile: AudioFile = {
+        id: `file-${Date.now()}`,
+        name: fileName,
+        path: filePath,
+        size: 0, // Will show as "Unknown" until we get stats
+        status: 'pending'
+      };
+
+      setFiles(prev => {
+        const updated = [...prev, newFile];
+        log(`Added file to queue. Total files: ${updated.length}`);
+        return updated;
+      });
+
+    } catch (err: any) {
+      log(`ERROR in handleBrowse: ${err.message}`);
+      alert('Failed to open file dialog: ' + err.message);
+    }
+  };
+
+  // Process all files
+  const handleProcess = async () => {
+    log('Process button clicked');
+    
+    if (files.length === 0) {
+      alert('Please select at least one file');
+      log('No files to process');
+      return;
+    }
+
+    if (!window.api) {
+      alert('Error: Electron API not available');
+      log('ERROR: window.api is undefined');
+      return;
+    }
+
+    const pendingFiles = files.filter(f => f.status === 'pending');
+    if (pendingFiles.length === 0) {
+      alert('All files already processed');
+      log('No pending files to process');
+      return;
+    }
+
+    setIsProcessing(true);
+    log(`Starting to process ${pendingFiles.length} pending files`);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.status !== 'pending') continue;
+
+      setCurrentFileIndex(i);
+      
+      // Update status to processing
+      setFiles(prev => prev.map((f, idx) => 
+        idx === i ? { ...f, status: 'processing' } : f
+      ));
+
+      log(`Processing file ${i + 1}/${files.length}: ${file.name}`);
+
+      try {
         const result = await window.api.processAudio(file.path, {
           remove_artifacts: true,
           mastering: true,
           preset: 'spotify_ready',
           intensity: 0.7,
-          target_lufs: -14,
-          normalize_loudness: true
+          target_lufs: -14
         });
-        
-        if (result && result.success) {
-          setProcessedFiles(prev => [...prev, outputPath]);
-          console.log(`Processed ${file.name}:`, result);
+
+        log(`Python result for ${file.name}: ${JSON.stringify(result).slice(0, 200)}`);
+
+        if (result.success) {
+          setFiles(prev => prev.map((f, idx) => 
+            idx === i ? { 
+              ...f, 
+              status: 'done', 
+              outputPath: result.outputPath 
+            } : f
+          ));
+          log(`✅ Successfully processed: ${file.name}`);
         } else {
-          console.error(`Failed to process ${file.name}:`, result?.error || 'Unknown error');
-          alert(`Failed to process ${file.name}. See console for details.`);
+          setFiles(prev => prev.map((f, idx) => 
+            idx === i ? { 
+              ...f, 
+              status: 'error', 
+              error: result.error || 'Processing failed' 
+            } : f
+          ));
+          log(`❌ Failed to process: ${file.name} - ${result.error}`);
         }
+      } catch (err: any) {
+        setFiles(prev => prev.map((f, idx) => 
+          idx === i ? { 
+            ...f, 
+            status: 'error', 
+            error: err.message 
+          } : f
+        ));
+        log(`❌ Exception processing ${file.name}: ${err.message}`);
       }
-      
-      setProcessingStatus('Processing complete!');
-      alert(`Processing complete! ${files.length} file(s) processed.`);
-    } catch (err: any) {
-      console.error('Processing error:', err);
-      setProcessingStatus('Processing failed.');
-      alert('Processing failed: ' + (err.message || 'Unknown error'));
-    } finally {
-      setIsProcessing(false);
     }
+
+    setIsProcessing(false);
+    setCurrentFileIndex(-1);
+    log('Processing complete');
   };
 
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
+  // Remove file from queue
+  const removeFile = (id: string) => {
+    log(`Removing file: ${id}`);
+    setFiles(prev => prev.filter(f => f.id !== id));
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return 'Unknown size';
-    const mb = bytes / (1024 * 1024);
-    if (mb < 0.01) return '< 0.01 MB';
-    return `${mb.toFixed(2)} MB`;
+  // Clear processed files
+  const clearCompleted = () => {
+    log('Clearing completed files');
+    setFiles(prev => prev.filter(f => f.status !== 'done'));
+  };
+
+  // Format file size
+  const formatSize = (bytes: number) => {
+    if (!bytes || bytes < 0) return 'Unknown size';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  // Open output folder
+  const openOutput = (path: string) => {
+    log(`Opening output: ${path}`);
+    // In real app, this would open the folder
+    alert(`File saved to:\n${path}`);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-gray-100 p-6">
+    <div style={{ 
+      minHeight: '100vh', 
+      background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)',
+      color: '#f8fafc',
+      padding: '24px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
+    }}>
       {/* Header */}
-      <header className="mb-8">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <Sparkles />
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent">
-              Undectr
-            </h1>
-          </div>
-          <div className="flex items-center space-x-4">
-            <span className="px-3 py-1 bg-green-900/30 text-green-400 rounded-full text-sm">
-              Free Trial: 5 tracks remaining
-            </span>
-            <button className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition">
-              Upgrade
-            </button>
-          </div>
-        </div>
-        <p className="text-gray-400 mt-2">Remove AI artifacts • Master tracks • Separate stems • 100% local processing</p>
+      <header style={{ textAlign: 'center', marginBottom: '32px' }}>
+        <h1 style={{ 
+          fontSize: '2.5rem', 
+          fontWeight: 'bold',
+          background: 'linear-gradient(90deg, #a855f7, #3b82f6)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          marginBottom: '8px'
+        }}>
+          Undectr
+        </h1>
+        <p style={{ color: '#94a3b8', fontSize: '1.1rem' }}>
+          Remove AI artifacts • Master your tracks
+        </p>
       </header>
 
       {/* Main Content */}
-      <div className="flex space-x-6">
-        {/* Sidebar */}
-        <div className="w-64 space-y-2">
-          <button
-            onClick={() => setActiveTab('process')}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
-              activeTab === 'process' 
-                ? 'bg-gray-800 text-white' 
-                : 'hover:bg-gray-800/50 text-gray-300'
-            }`}
+      <div style={{ maxWidth: '700px', margin: '0 auto' }}>
+        
+        {/* Upload Area */}
+        <div style={{
+          border: '2px dashed #475569',
+          borderRadius: '16px',
+          padding: '48px',
+          textAlign: 'center',
+          background: 'rgba(30, 41, 59, 0.5)',
+          marginBottom: '24px'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📤</div>
+          <h3 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>
+            Drop audio files here
+          </h3>
+          <p style={{ color: '#94a3b8', marginBottom: '20px' }}>
+            WAV, MP3, FLAC supported
+          </p>
+          <button 
+            onClick={handleBrowse}
+            disabled={isProcessing}
+            style={{
+              background: 'linear-gradient(90deg, #a855f7, #3b82f6)',
+              color: 'white',
+              border: 'none',
+              padding: '12px 32px',
+              fontSize: '1rem',
+              fontWeight: '600',
+              borderRadius: '10px',
+              cursor: isProcessing ? 'not-allowed' : 'pointer',
+              opacity: isProcessing ? 0.6 : 1
+            }}
           >
-            <FileAudio />
-            <span>Process Audio</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
-              activeTab === 'settings' 
-                ? 'bg-gray-800 text-white' 
-                : 'hover:bg-gray-800/50 text-gray-300'
-            }`}
-          >
-            <Settings />
-            <span>Settings</span>
+            Browse Files
           </button>
         </div>
 
-        {/* Main Panel */}
-        <div className="flex-1">
-          {activeTab === 'process' ? (
-            <div className="space-y-6">
-              {/* Drop Zone */}
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleFileDrop}
-                className="border-2 border-dashed border-gray-700 rounded-2xl p-12 text-center hover:border-purple-500 transition cursor-pointer"
+        {/* File List */}
+        {files.length > 0 && (
+          <div style={{
+            background: 'rgba(30, 41, 59, 0.5)',
+            borderRadius: '12px',
+            padding: '20px',
+            marginBottom: '24px'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '16px'
+            }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: '600' }}>
+                Files ({files.length})
+              </h3>
+              <button 
+                onClick={clearCompleted}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #475569',
+                  color: '#94a3b8',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem'
+                }}
               >
-                <Upload />
-                <h3 className="text-xl font-semibold mb-2">Drop Suno AI audio here</h3>
-                <p className="text-gray-400 mb-6">Supports WAV, MP3, FLAC, OGG</p>
-                <button 
-                  onClick={handleBrowseFiles}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition"
+                Clear Completed
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {files.map((file, index) => (
+                <div 
+                  key={file.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '12px',
+                    background: file.status === 'processing' 
+                      ? 'rgba(168, 85, 247, 0.1)' 
+                      : file.status === 'done'
+                      ? 'rgba(34, 197, 94, 0.1)'
+                      : file.status === 'error'
+                      ? 'rgba(239, 68, 68, 0.1)'
+                      : 'rgba(15, 23, 42, 0.5)',
+                    borderRadius: '8px',
+                    border: `1px solid ${
+                      file.status === 'processing' ? 'rgba(168, 85, 247, 0.3)' :
+                      file.status === 'done' ? 'rgba(34, 197, 94, 0.3)' :
+                      file.status === 'error' ? 'rgba(239, 68, 68, 0.3)' :
+                      '#334155'
+                    }`
+                  }}
                 >
-                  Browse Files
-                </button>
-              </div>
-
-              {/* File List */}
-              {files.length > 0 && (
-                <div className="bg-gray-800/50 rounded-xl p-6">
-                  <h3 className="text-lg font-semibold mb-4">Files to Process</h3>
-                  <div className="space-y-3">
-                    {files.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between bg-gray-900/50 p-4 rounded-lg">
-                        <div className="flex items-center space-x-3">
-                          <FileAudio />
-                          <div>
-                            <p className="font-medium">{file.name}</p>
-                            <p className="text-sm text-gray-400">
-                              {formatFileSize(file.size)}
-                            </p>
-                            <p className="text-xs text-gray-500 truncate max-w-md" title={file.path}>
-                              {file.path}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => removeFile(index)}
-                          className="text-red-400 hover:text-red-300 transition px-3 py-1"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
+                  <span style={{ marginRight: '12px', fontSize: '20px' }}>
+                    {file.status === 'pending' ? '🎵' :
+                     file.status === 'processing' ? '⏳' :
+                     file.status === 'done' ? '✅' : '❌'}
+                  </span>
+                  
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ 
+                      fontWeight: '500', 
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {file.name}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                      {formatSize(file.size)}
+                      {file.status === 'processing' && currentFileIndex === index && ' • Processing...'}
+                      {file.status === 'done' && ' • Complete'}
+                      {file.status === 'error' && ` • Error: ${file.error}`}
+                    </div>
                   </div>
 
-                  {/* Processing Status */}
-                  {processingStatus && (
-                    <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg">
-                      <p className="text-sm text-blue-300">
-                        {isProcessing && <span className="inline-block animate-spin mr-2">⟳</span>}
-                        {processingStatus}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Process Button */}
-                  <div className="mt-6">
-                    <button
-                      onClick={handleProcess}
-                      disabled={isProcessing || files.length === 0}
-                      className="w-full py-4 bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl font-semibold text-lg flex items-center justify-center space-x-3 hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  {file.status === 'done' && file.outputPath && (
+                    <button 
+                      onClick={() => openOutput(file.outputPath!)}
+                      style={{
+                        background: 'rgba(34, 197, 94, 0.2)',
+                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                        color: '#22c55e',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        marginRight: '8px',
+                        fontSize: '0.8rem'
+                      }}
                     >
-                      {isProcessing ? (
-                        <>
-                          <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          <span>Processing...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play />
-                          <span>Process {files.length} File(s)</span>
-                        </>
-                      )}
+                      Open
                     </button>
-                  </div>
-
-                  {/* Processed Files */}
-                  {processedFiles.length > 0 && (
-                    <div className="mt-4 p-4 bg-green-900/20 border border-green-500/30 rounded-lg">
-                      <h4 className="text-green-400 font-medium mb-2 flex items-center">
-                        <Check />
-                        <span className="ml-2">Processed Files:</span>
-                      </h4>
-                      <ul className="space-y-1">
-                        {processedFiles.map((path, i) => (
-                          <li key={i} className="text-sm text-gray-300 truncate" title={path}>
-                            {path.split('/').pop() || path.split('\\').pop()}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
                   )}
-                </div>
-              )}
 
-              {/* Features */}
-              <div className="grid grid-cols-3 gap-6">
-                <div className="bg-gray-800/30 p-6 rounded-xl">
-                  <div className="h-12 w-12 bg-purple-900/30 rounded-lg flex items-center justify-center mb-4">
-                    <Sparkles />
-                  </div>
-                  <h4 className="font-semibold mb-2">AI Artifact Removal</h4>
-                  <p className="text-sm text-gray-400">Remove metallic shimmer and robotic vocals from Suno AI tracks</p>
+                  <button 
+                    onClick={() => removeFile(file.id)}
+                    disabled={file.status === 'processing'}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#ef4444',
+                      cursor: file.status === 'processing' ? 'not-allowed' : 'pointer',
+                      fontSize: '1.2rem',
+                      opacity: file.status === 'processing' ? 0.3 : 1
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
-                
-                <div className="bg-gray-800/30 p-6 rounded-xl">
-                  <div className="h-12 w-12 bg-blue-900/30 rounded-lg flex items-center justify-center mb-4">
-                    <FileAudio />
-                  </div>
-                  <h4 className="font-semibold mb-2">Professional Mastering</h4>
-                  <p className="text-sm text-gray-400">Genre-specific mastering presets for radio-ready sound</p>
-                </div>
-                
-                <div className="bg-gray-800/30 p-6 rounded-xl">
-                  <div className="h-12 w-12 bg-green-900/30 rounded-lg flex items-center justify-center mb-4">
-                    <Settings />
-                  </div>
-                  <h4 className="font-semibold mb-2">Stem Separation</h4>
-                  <p className="text-sm text-gray-400">Separate vocals, drums, bass, and other instruments</p>
-                </div>
-              </div>
+              ))}
             </div>
+          </div>
+        )}
+
+        {/* Process Button */}
+        {files.length > 0 && (
+          <button 
+            onClick={handleProcess}
+            disabled={isProcessing || files.filter(f => f.status === 'pending').length === 0}
+            style={{
+              width: '100%',
+              background: isProcessing 
+                ? 'linear-gradient(90deg, #4b5563, #374151)' 
+                : 'linear-gradient(90deg, #22c55e, #16a34a)',
+              color: 'white',
+              border: 'none',
+              padding: '16px',
+              fontSize: '1.1rem',
+              fontWeight: '600',
+              borderRadius: '12px',
+              cursor: isProcessing ? 'not-allowed' : 'pointer',
+              marginBottom: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
+            }}
+          >
+            {isProcessing && (
+              <span style={{ 
+                display: 'inline-block',
+                width: '20px',
+                height: '20px',
+                border: '2px solid rgba(255,255,255,0.3)',
+                borderTopColor: 'white',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+              }} />
+            )}
+            {isProcessing 
+              ? `Processing ${files.filter(f => f.status === 'processing').length} file(s)...` 
+              : `Process ${files.filter(f => f.status === 'pending').length} File(s)`
+            }
+          </button>
+        )}
+
+        {/* Debug Logs */}
+        <div style={{
+          background: 'rgba(0, 0, 0, 0.3)',
+          borderRadius: '8px',
+          padding: '12px',
+          fontSize: '0.75rem',
+          fontFamily: 'monospace',
+          color: '#94a3b8',
+          maxHeight: '150px',
+          overflow: 'auto'
+        }}>
+          <div style={{ marginBottom: '8px', color: '#64748b', borderBottom: '1px solid #334155', paddingBottom: '4px' }}>
+            Debug Console
+          </div>
+          {logs.length === 0 ? (
+            <span style={{ opacity: 0.5 }}>No logs yet...</span>
           ) : (
-            <div className="bg-gray-800/30 rounded-xl p-8">
-              <h2 className="text-2xl font-semibold mb-6">Settings</h2>
-              
-              <div className="space-y-6">
-                <div>
-                  <h3 className="font-medium mb-3">Output Settings</h3>
-                  <div className="space-y-4">
-                    <label className="flex items-center space-x-3">
-                      <input type="checkbox" className="rounded bg-gray-700" defaultChecked />
-                      <span>Save processed files to separate folder</span>
-                    </label>
-                    
-                    <label className="flex items-center space-x-3">
-                      <input type="checkbox" className="rounded bg-gray-700" />
-                      <span>Keep original files</span>
-                    </label>
-                    
-                    <div>
-                      <label className="block text-sm mb-2">Output Format</label>
-                      <select className="w-full bg-gray-700 rounded-lg px-4 py-2">
-                        <option>WAV (Lossless)</option>
-                        <option>MP3 (320kbps)</option>
-                        <option>FLAC</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-medium mb-3">Processing Settings</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm mb-2">Artifact Removal Intensity</label>
-                      <input type="range" min="0" max="100" defaultValue="70" className="w-full" />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm mb-2">Mastering Preset</label>
-                      <select className="w-full bg-gray-700 rounded-lg px-4 py-2">
-                        <option>Spotify Ready</option>
-                        <option>YouTube Ready</option>
-                        <option>Club Master</option>
-                        <option>Radio Ready</option>
-                        <option>Custom</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-medium mb-3">License</h3>
-                  <div className="space-y-4">
-                    <div className="bg-gray-900/50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-400">Current Plan</p>
-                      <p className="font-semibold text-green-400">Free Trial (5 tracks remaining)</p>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm mb-2">License Key</label>
-                      <div className="flex space-x-2">
-                        <input 
-                          type="text" 
-                          placeholder="Enter your license key" 
-                          className="flex-1 bg-gray-700 rounded-lg px-4 py-2"
-                        />
-                        <button className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg">
-                          Activate
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            logs.map((log, i) => (
+              <div key={i} style={{ marginBottom: '2px' }}>{log}</div>
+            ))
           )}
+        </div>
+
+        {/* Features */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: '1fr 1fr', 
+          gap: '16px',
+          marginTop: '32px'
+        }}>
+          <div style={{
+            background: 'rgba(168, 85, 247, 0.1)',
+            border: '1px solid rgba(168, 85, 247, 0.2)',
+            borderRadius: '12px',
+            padding: '20px'
+          }}>
+            <div style={{ fontSize: '24px', marginBottom: '8px' }}>✨</div>
+            <h4 style={{ fontWeight: '600', marginBottom: '4px' }}>
+              AI Artifact Removal
+            </h4>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+              Removes metallic shimmer and robotic artifacts
+            </p>
+          </div>
+          
+          <div style={{
+            background: 'rgba(59, 130, 246, 0.1)',
+            border: '1px solid rgba(59, 130, 246, 0.2)',
+            borderRadius: '12px',
+            padding: '20px'
+          }}>
+            <div style={{ fontSize: '24px', marginBottom: '8px' }}>🎵</div>
+            <h4 style={{ fontWeight: '600', marginBottom: '4px' }}>
+              Professional Mastering
+            </h4>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+              Ready for Spotify, YouTube, streaming
+            </p>
+          </div>
         </div>
       </div>
 
       {/* Footer */}
-      <footer className="mt-12 pt-6 border-t border-gray-800 text-center text-gray-500 text-sm">
-        <p>Undectr • 100% local processing • No data sent to servers</p>
-        <p className="mt-1">Version 1.0.0 • Made with ❤️ for Suno AI creators</p>
+      <footer style={{ 
+        textAlign: 'center', 
+        marginTop: '48px', 
+        paddingTop: '24px',
+        borderTop: '1px solid #334155',
+        color: '#64748b',
+        fontSize: '0.85rem'
+      }}>
+        <p>Undectr • 100% local processing</p>
       </footer>
+
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
-
-export default App;
