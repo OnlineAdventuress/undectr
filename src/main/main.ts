@@ -102,6 +102,33 @@ ipcMain.handle('open-file-dialog', async () => {
   return filePath;
 });
 
+// Helper to find Python 3 executable
+function findPythonExecutable(): string {
+  const possiblePythons = [
+    '/usr/bin/python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+    '/opt/local/bin/python3',
+    'python3',
+    'python'
+  ];
+  
+  for (const py of possiblePythons) {
+    try {
+      // Check if command exists by running it with --version
+      const { execSync } = require('child_process');
+      execSync(`${py} --version`, { stdio: 'ignore' });
+      console.log('[IPC] Found Python:', py);
+      return py;
+    } catch {
+      continue;
+    }
+  }
+  
+  console.log('[IPC] Falling back to python3');
+  return 'python3';
+}
+
 ipcMain.handle('process-audio', async (event, filePath: string, settings: any) => {
   console.log('[IPC] process-audio called for:', filePath);
   console.log('[IPC] Settings:', JSON.stringify(settings, null, 2));
@@ -171,27 +198,31 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
     
     console.log('[IPC] Using Python script:', pythonScript);
     
-    // Get the python directory (for cwd)
+    // Get the python directory (for PYTHONPATH)
     const pythonDir = path.dirname(pythonScript);
-    console.log('[IPC] Python directory (cwd):', pythonDir);
+    console.log('[IPC] Python directory:', pythonDir);
     
-    // Verify python directory exists and is a directory
+    // Verify python script is actually a file
     try {
-      const stats = fs.statSync(pythonDir);
-      if (!stats.isDirectory()) {
-        console.error('[IPC] Python path is not a directory:', pythonDir);
+      const stats = fs.statSync(pythonScript);
+      if (!stats.isFile()) {
+        console.error('[IPC] Python script is not a file:', pythonScript);
         return {
           success: false,
-          error: `Invalid Python directory: ${pythonDir}`
+          error: `Invalid Python script: ${pythonScript}`
         };
       }
     } catch (err) {
-      console.error('[IPC] Cannot stat Python directory:', err);
+      console.error('[IPC] Cannot stat Python script:', err);
       return {
         success: false,
-        error: `Cannot access Python directory: ${pythonDir}`
+        error: `Cannot access Python script: ${pythonScript}`
       };
     }
+
+    // Find Python executable
+    const pythonExe = findPythonExecutable();
+    console.log('[IPC] Using Python executable:', pythonExe);
 
     const outputPath = filePath.replace(/(\.[a-zA-Z0-9]+)$/, '_processed$1');
     console.log('[IPC] Output will be:', outputPath);
@@ -207,18 +238,23 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
         '--verbose'
       ];
 
-      console.log('[IPC] Spawning python3 with args:', args);
-      console.log('[IPC] Working directory:', pythonDir);
+      console.log('[IPC] Spawning:', pythonExe, args.join(' '));
       
-      // Use system python3 and pass the script as first argument
-      // This is more reliable than trying to bundle a Python interpreter
-      const pythonProcess = spawn('python3', args, {
-        cwd: pythonDir,
+      // CRITICAL FIX: Don't use cwd option - it causes ENOTDIR if pythonDir doesn't exist
+      // Instead, use env.PYTHONPATH to help Python find the processors/ and utils/ modules
+      const spawnOptions = {
         env: {
           ...process.env,
-          PYTHONPATH: pythonDir
-        }
-      });
+          PYTHONPATH: pythonDir,
+          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin'
+        },
+        // Use shell on macOS to help find python3 in PATH
+        shell: process.platform === 'darwin'
+      };
+      
+      console.log('[IPC] Spawn options:', JSON.stringify(spawnOptions, null, 2));
+      
+      const pythonProcess = spawn(pythonExe, args, spawnOptions);
 
       let stdout = '';
       let stderr = '';
@@ -261,6 +297,8 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
 
       pythonProcess.on('error', (err: any) => {
         console.error('[IPC] Failed to start Python process:', err);
+        console.error('[IPC] Error code:', err.code);
+        console.error('[IPC] Error message:', err.message);
         resolve({
           success: false,
           error: `Failed to start Python: ${err.message}. Make sure Python 3 is installed on your system.`
