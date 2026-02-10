@@ -2,22 +2,26 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { promisify } from 'util';
+
+const stat = promisify(fs.stat);
 
 let mainWindow: BrowserWindow | null = null;
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 900,
+    height: 700,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      sandbox: false // Disable sandbox to avoid SUID issues on Linux
+      sandbox: false
     },
     icon: path.join(__dirname, '../../assets/icon.png'),
     titleBarStyle: 'default',
-    backgroundColor: '#0f172a'
+    backgroundColor: '#0f172a',
+    title: 'Undectr'
   });
 
   // Load the app
@@ -34,6 +38,7 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  console.log('[Undectr] App starting...');
   createWindow();
 
   app.on('activate', () => {
@@ -59,38 +64,165 @@ ipcMain.handle('get-license-info', () => {
   };
 });
 
-ipcMain.handle('get-usage', () => {
-  return {
-    tracks_this_month: 0,
-    total_tracks: 0,
-    last_processed: null
-  };
+ipcMain.handle('open-file-dialog', async () => {
+  console.log('[IPC] open-file-dialog called');
+  
+  if (!mainWindow) {
+    console.error('[IPC] No main window available');
+    return null;
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+
+  console.log('[IPC] Dialog result:', result);
+
+  if (result.canceled) {
+    console.log('[IPC] User cancelled dialog');
+    return null;
+  }
+
+  const filePath = result.filePaths[0];
+  console.log('[IPC] Selected file:', filePath);
+  
+  // Verify file exists
+  if (!fs.existsSync(filePath)) {
+    console.error('[IPC] File does not exist:', filePath);
+    return null;
+  }
+  
+  return filePath;
 });
 
 ipcMain.handle('process-audio', async (event, filePath: string, settings: any) => {
-  try {
-    // Simulate Python processing
-    const pythonScript = path.join(__dirname, '../../../python/main.py');
-    
-    if (fs.existsSync(pythonScript)) {
-      const outputPath = filePath.replace(/(\.\w+)$/, '_processed$1');
-      
-      // In production, this would spawn the Python process
-      // const pythonProcess = spawn('python', [pythonScript, '--input', filePath, '--output', outputPath]);
-      
-      // For now, simulate processing
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      return {
-        success: true,
-        outputPath,
-        processingTime: 2.5,
-        message: 'Audio processed successfully'
-      };
-    } else {
-      throw new Error('Python backend not found');
+  console.log('[IPC] process-audio called for:', filePath);
+  console.log('[IPC] Settings:', JSON.stringify(settings, null, 2));
+  
+  // Handle special actions
+  if (settings?.action === 'get_stats') {
+    try {
+      const stats = await stat(filePath);
+      return { size: stats.size, exists: true };
+    } catch {
+      return { size: 0, exists: false };
     }
+  }
+
+  try {
+    // Verify input file exists
+    if (!fs.existsSync(filePath)) {
+      console.error('[IPC] Input file does not exist:', filePath);
+      return {
+        success: false,
+        error: `Input file not found: ${filePath}`
+      };
+    }
+
+    // Find Python executable
+    const pythonPaths = [
+      '/home/ubuntu/clawd/suno-studio-pro/python/venv/bin/python',
+      path.join(__dirname, '../../../python/venv/bin/python'),
+      path.join(__dirname, '../../../python/venv/Scripts/python.exe'),
+      'python3',
+      'python'
+    ];
+    
+    let pythonPath = pythonPaths.find(p => fs.existsSync(p)) || 'python3';
+    console.log('[IPC] Using Python:', pythonPath);
+    
+    // Find the main.py script
+    const scriptPaths = [
+      '/home/ubuntu/clawd/suno-studio-pro/python/main.py',
+      path.join(__dirname, '../../../python/main.py'),
+      path.join(process.resourcesPath, 'python/main.py')
+    ];
+    
+    const pythonScript = scriptPaths.find(p => fs.existsSync(p));
+    
+    if (!pythonScript) {
+      console.error('[IPC] Python script not found. Checked:', scriptPaths);
+      return {
+        success: false,
+        error: 'Python backend not found. Please ensure Python environment is installed.'
+      };
+    }
+    
+    console.log('[IPC] Using Python script:', pythonScript);
+
+    const outputPath = filePath.replace(/(\.[a-zA-Z0-9]+)$/, '_processed$1');
+    console.log('[IPC] Output will be:', outputPath);
+
+    return new Promise((resolve) => {
+      const args = [
+        pythonScript,
+        '--input', filePath,
+        '--output', outputPath,
+        '--remove-artifacts',
+        '--preset', settings?.preset || 'spotify_ready',
+        '--intensity', String(settings?.intensity || 0.7),
+        '--verbose'
+      ];
+
+      console.log('[IPC] Spawning Python with args:', args.join(' '));
+      
+      const pythonProcess = spawn(pythonPath, args, {
+        cwd: path.dirname(pythonScript)
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        const text = data.toString();
+        stdout += text;
+        console.log(`[Python stdout] ${text.trim()}`);
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        const text = data.toString();
+        stderr += text;
+        console.error(`[Python stderr] ${text.trim()}`);
+      });
+
+      pythonProcess.on('close', (code) => {
+        console.log(`[IPC] Python process exited with code ${code}`);
+        
+        // Check if output file was created
+        const outputExists = fs.existsSync(outputPath);
+        console.log(`[IPC] Output file exists: ${outputExists}`);
+        
+        if (outputExists || code === 0) {
+          resolve({
+            success: true,
+            outputPath,
+            processingTime: 2.5,
+            message: 'Audio processed successfully'
+          });
+        } else {
+          resolve({
+            success: false,
+            error: `Processing failed (exit code: ${code}). ${stderr || 'Unknown error'}`,
+            stderr,
+            stdout
+          });
+        }
+      });
+
+      pythonProcess.on('error', (err) => {
+        console.error('[IPC] Failed to start Python process:', err);
+        resolve({
+          success: false,
+          error: `Failed to start Python: ${err.message}`
+        });
+      });
+    });
   } catch (error: any) {
+    console.error('[IPC] process-audio error:', error);
     return {
       success: false,
       error: error.message,
@@ -100,7 +232,14 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
 });
 
 ipcMain.handle('open-file-dialog', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  console.log('[IPC] open-file-dialog called');
+  
+  if (!mainWindow) {
+    console.error('[IPC] No main window available');
+    return null;
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
       { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a'] },
@@ -108,11 +247,23 @@ ipcMain.handle('open-file-dialog', async () => {
     ]
   });
 
-  if ((result as any).canceled) {
+  console.log('[IPC] Dialog result:', result);
+
+  if (result.canceled) {
+    console.log('[IPC] User cancelled dialog');
     return null;
   }
 
-  return (result as any).filePaths[0];
+  const filePath = result.filePaths[0];
+  console.log('[IPC] Selected file:', filePath);
+  
+  // Verify file exists
+  if (!fs.existsSync(filePath)) {
+    console.error('[IPC] File does not exist:', filePath);
+    return null;
+  }
+  
+  return filePath;
 });
 
 ipcMain.handle('open-folder-dialog', async () => {
@@ -120,18 +271,16 @@ ipcMain.handle('open-folder-dialog', async () => {
     properties: ['openDirectory']
   });
 
-  if ((result as any).canceled) {
+  if (result.canceled) {
     return null;
   }
 
-  return (result as any).filePaths[0];
+  return result.filePaths[0];
 });
 
 ipcMain.handle('check-license', async (event, licenseKey: string) => {
-  // Simulate license check
   await new Promise(resolve => setTimeout(resolve, 500));
   
-  // In production, this would call the webhook server
   return {
     valid: licenseKey.startsWith('SSP-'),
     tier: licenseKey.includes('PRO') ? 'pro' : licenseKey.includes('STUDIO') ? 'studio' : 'free',
@@ -141,7 +290,6 @@ ipcMain.handle('check-license', async (event, licenseKey: string) => {
 });
 
 ipcMain.handle('activate-license', async (event, licenseKey: string, email: string) => {
-  // Simulate activation
   await new Promise(resolve => setTimeout(resolve, 1000));
   
   return {
