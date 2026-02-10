@@ -231,41 +231,6 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
   }
 });
 
-ipcMain.handle('open-file-dialog', async () => {
-  console.log('[IPC] open-file-dialog called');
-  
-  if (!mainWindow) {
-    console.error('[IPC] No main window available');
-    return null;
-  }
-
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    filters: [
-      { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a'] },
-      { name: 'All Files', extensions: ['*'] }
-    ]
-  });
-
-  console.log('[IPC] Dialog result:', result);
-
-  if (result.canceled) {
-    console.log('[IPC] User cancelled dialog');
-    return null;
-  }
-
-  const filePath = result.filePaths[0];
-  console.log('[IPC] Selected file:', filePath);
-  
-  // Verify file exists
-  if (!fs.existsSync(filePath)) {
-    console.error('[IPC] File does not exist:', filePath);
-    return null;
-  }
-  
-  return filePath;
-});
-
 ipcMain.handle('open-folder-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory']
