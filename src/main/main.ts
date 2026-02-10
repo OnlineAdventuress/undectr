@@ -123,23 +123,37 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
       };
     }
 
-    // Find Python executable
+    // Find Python executable - check multiple locations for bundled vs dev
+    const isDev = process.env.NODE_ENV === 'development';
+    const appPath = app.getAppPath();
+    
     const pythonPaths = [
-      '/home/ubuntu/clawd/suno-studio-pro/python/venv/bin/python',
-      path.join(__dirname, '../../../python/venv/bin/python'),
-      path.join(__dirname, '../../../python/venv/Scripts/python.exe'),
+      // Development paths
+      isDev && path.join(__dirname, '../../../python/venv/bin/python'),
+      isDev && path.join(__dirname, '../../../python/venv/Scripts/python.exe'),
+      // Bundled app paths (macOS)
+      path.join(process.resourcesPath, 'python/venv/bin/python'),
+      path.join(appPath, 'python/venv/bin/python'),
+      path.join(process.resourcesPath, '../python/venv/bin/python'),
+      // System Python as fallback
       'python3',
       'python'
-    ];
+    ].filter(Boolean) as string[];
     
     let pythonPath = pythonPaths.find(p => fs.existsSync(p)) || 'python3';
     console.log('[IPC] Using Python:', pythonPath);
+    console.log('[IPC] App path:', appPath);
+    console.log('[IPC] Resources path:', process.resourcesPath);
     
-    // Find the main.py script
+    // Find the main.py script - check bundled locations first
     const scriptPaths = [
-      '/home/ubuntu/clawd/suno-studio-pro/python/main.py',
+      // Bundled app paths (macOS app bundle)
+      path.join(process.resourcesPath, 'python/main.py'),
+      path.join(appPath, 'python/main.py'),
+      path.join(process.resourcesPath, '../python/main.py'),
+      // Development paths
       path.join(__dirname, '../../../python/main.py'),
-      path.join(process.resourcesPath, 'python/main.py')
+      '/home/ubuntu/clawd/suno-studio-pro/python/main.py'
     ];
     
     const pythonScript = scriptPaths.find(p => fs.existsSync(p));
