@@ -51,6 +51,11 @@ npm run build:linux
 - **Windows**: Windows 10 or later
 - **Linux**: Ubuntu 18.04 or equivalent
 
+## Build Status
+
+[![Build macOS](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-mac.yml/badge.svg)](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-mac.yml)
+[![Build Windows](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-win.yml/badge.svg)](https://github.com/OnlineAdventuress/undectr/actions/workflows/build-win.yml)
+
 ## License
 
 © 2025 Undectr. All rights reserved.
