@@ -236,14 +236,12 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
     console.log('[IPC] Output will be:', outputPath);
 
     return new Promise((resolve) => {
+      // SOTA watermark remover arguments
       const args = [
         pythonScript,
-        '--input', filePath,
-        '--output', outputPath,
-        '--remove-artifacts',
-        '--preset', settings?.preset || 'spotify_ready',
-        '--intensity', String(settings?.intensity || 0.7),
-        '--verbose'
+        filePath,
+        outputPath,
+        '--mode', settings?.intensity > 0.7 ? 'aggressive' : 'balanced'
       ];
 
       console.log('[IPC] Spawning:', pythonExe, args);
