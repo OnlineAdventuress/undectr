@@ -102,31 +102,36 @@ ipcMain.handle('open-file-dialog', async () => {
   return filePath;
 });
 
-// Helper to find Python 3 executable
+// Helper to find Python 3 executable - returns absolute path
 function findPythonExecutable(): string {
   const possiblePythons = [
     '/usr/bin/python3',
     '/usr/local/bin/python3',
     '/opt/homebrew/bin/python3',
-    '/opt/local/bin/python3',
-    'python3',
-    'python'
+    '/opt/local/bin/python3'
   ];
   
   for (const py of possiblePythons) {
-    try {
-      // Check if command exists by running it with --version
-      const { execSync } = require('child_process');
-      execSync(`${py} --version`, { stdio: 'ignore' });
-      console.log('[IPC] Found Python:', py);
+    if (fs.existsSync(py)) {
+      console.log('[IPC] Found Python at:', py);
       return py;
-    } catch {
-      continue;
     }
   }
   
-  console.log('[IPC] Falling back to python3');
-  return 'python3';
+  // If no absolute path found, try to resolve via PATH using 'which'
+  try {
+    const { execSync } = require('child_process');
+    const resolvedPath = execSync('which python3', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+      console.log('[IPC] Found Python via which:', resolvedPath);
+      return resolvedPath;
+    }
+  } catch {
+    // which failed
+  }
+  
+  console.log('[IPC] Falling back to /usr/bin/python3');
+  return '/usr/bin/python3';
 }
 
 ipcMain.handle('process-audio', async (event, filePath: string, settings: any) => {
@@ -238,18 +243,17 @@ ipcMain.handle('process-audio', async (event, filePath: string, settings: any) =
         '--verbose'
       ];
 
-      console.log('[IPC] Spawning:', pythonExe, args.join(' '));
+      console.log('[IPC] Spawning:', pythonExe, args);
       
-      // CRITICAL FIX: Don't use cwd option - it causes ENOTDIR if pythonDir doesn't exist
-      // Instead, use env.PYTHONPATH to help Python find the processors/ and utils/ modules
+      // CRITICAL: Don't use shell mode - it causes issues with special characters in filenames
+      // The args array is passed directly to the executable without shell interpretation
       const spawnOptions = {
         env: {
           ...process.env,
           PYTHONPATH: pythonDir,
-          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin'
-        },
-        // Use shell on macOS to help find python3 in PATH
-        shell: process.platform === 'darwin'
+          PATH: '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/opt/local/bin:' + (process.env.PATH || '')
+        }
+        // shell: false is the default - arguments are passed directly without shell interpretation
       };
       
       console.log('[IPC] Spawn options:', JSON.stringify(spawnOptions, null, 2));
