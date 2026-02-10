@@ -1,5 +1,21 @@
 import React, { useState } from 'react';
 
+// Type declarations for Electron API
+declare global {
+  interface Window {
+    api: {
+      getLicenseInfo: () => Promise<any>;
+      getUsage: () => Promise<any>;
+      processAudio: (filePath: string, settings: any) => Promise<any>;
+      openFileDialog: () => Promise<string | null>;
+      openFolderDialog: () => Promise<string | null>;
+      checkLicense: (licenseKey: string) => Promise<any>;
+      activateLicense: (licenseKey: string, email: string) => Promise<any>;
+      getAppVersion: () => Promise<any>;
+    };
+  }
+}
+
 // Simple icon replacements
 const FileAudio = () => <span>🎵</span>;
 const Settings = () => <span>⚙️</span>;
@@ -19,6 +35,23 @@ function App() {
       file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg)$/i)
     );
     setFiles(prev => [...prev, ...audioFiles]);
+  };
+
+  const handleBrowseFiles = async () => {
+    try {
+      // @ts-ignore - window.api is injected by preload
+      const filePath = await window.api.openFileDialog();
+      if (filePath) {
+        // Create a File object from the path (we'll need to read it via IPC)
+        const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
+        const mockFile = new File([], fileName, { type: 'audio/mpeg' });
+        // Store the actual path separately for processing
+        (mockFile as any).path = filePath;
+        setFiles(prev => [...prev, mockFile]);
+      }
+    } catch (err) {
+      console.error('Failed to open file dialog:', err);
+    }
   };
 
   const handleProcess = async () => {
@@ -102,7 +135,10 @@ function App() {
                 <Upload />
                 <h3 className="text-xl font-semibold mb-2">Drop Suno AI audio here</h3>
                 <p className="text-gray-400 mb-6">Supports WAV, MP3, FLAC, OGG</p>
-                <button className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition">
+                <button 
+                  onClick={handleBrowseFiles}
+                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition"
+                >
                   Browse Files
                 </button>
               </div>

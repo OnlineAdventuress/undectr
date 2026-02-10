@@ -30,8 +30,44 @@ jobs:
     - name: Build TypeScript and Vite
       run: npm run build
     
+    - name: Debug - List dist folder contents
+      run: |
+        echo "=== DIST FOLDER STRUCTURE ==="
+        find dist -type f -o -type d | head -50
+        echo ""
+        echo "=== DIST/RENDERER CONTENTS ==="
+        ls -la dist/renderer/ || echo "ERROR: dist/renderer/ does not exist!"
+        echo ""
+        echo "=== DIST/MAIN.JS CHECK ==="
+        ls -la dist/main.js || echo "ERROR: dist/main.js does not exist!"
+    
     - name: Build macOS universal app
       run: npm run build:mac
+    
+    - name: Debug - Inspect app.asar contents
+      run: |
+        echo "=== RELEASE FOLDER ==="
+        ls -la release/
+        echo ""
+        echo "=== EXTRACTING APP.ASAR ==="
+        APP_PATH=$(find release -name "Undectr.app" -type d | head -1)
+        if [ -n "$APP_PATH" ]; then
+          echo "Found app at: $APP_PATH"
+          ASAR_PATH="$APP_PATH/Contents/Resources/app.asar"
+          if [ -f "$ASAR_PATH" ]; then
+            echo "Found app.asar at: $ASAR_PATH"
+            npx asar extract "$ASAR_PATH" /tmp/app-extracted
+            echo "=== EXTRACTED APP.ASAR CONTENTS ==="
+            find /tmp/app-extracted -type f | head -30
+            echo ""
+            echo "=== RENDERER FOLDER CHECK ==="
+            ls -la /tmp/app-extracted/dist/renderer/ || echo "ERROR: renderer folder not found in app.asar!"
+          else
+            echo "app.asar not found at expected path"
+          fi
+        else
+          echo "Undectr.app not found in release folder"
+        fi
     
     - name: List build artifacts
       run: |
